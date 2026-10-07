@@ -1,0 +1,3 @@
+.DS_Store
+native-src/.work/
+tests/test_ids*.txt
