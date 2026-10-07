@@ -190,6 +190,8 @@
   let showCreate = false;
   let appSelectChoice = "";
   let newAppName = "";
+  let useTemplate = false;
+  let templateChoice = "";
   const platformState = {};
   PLATFORMS.forEach(([id, , on]) => { platformState[id] = on; });
   let credsOpen = null;
@@ -314,6 +316,27 @@
     const name = el("input", { type: "text", placeholder: "New brainCloud App Name", value: newAppName });
     name.addEventListener("input", () => { newAppName = name.value; });
     wrap.appendChild(name);
+
+    // Templates come from this SDK's engine team on the server (e.g. RelayTestApp).
+    const tmplCb = el("input", { type: "checkbox", checked: useTemplate });
+    tmplCb.addEventListener("change", () => {
+      useTemplate = tmplCb.checked;
+      if (useTemplate && !state.templates.length) api("templates");
+      else render(state);
+    });
+    wrap.appendChild(el("label", { className: "check" }, [tmplCb, "Create using Template"]));
+    if (useTemplate) {
+      if (state.templates.length) {
+        if (!state.templates.some((t) => t.id === templateChoice)) templateChoice = state.templates[0].id;
+        const tmplSelect = el("select");
+        state.templates.forEach((t) => tmplSelect.appendChild(el("option", { value: t.id, textContent: t.name, selected: t.id === templateChoice })));
+        tmplSelect.addEventListener("change", () => { templateChoice = tmplSelect.value; });
+        wrap.appendChild(el("div", { className: "row" }, [tmplSelect, refreshButton(() => api("templates"))]));
+      } else {
+        wrap.appendChild(el("div", { className: "label", textContent: state.templatesError || "Loading templates…" }));
+      }
+    }
+
     wrap.appendChild(el("div", { className: "label", textContent: "Platforms" }));
     const grid = el("div", { className: "grid" });
     PLATFORMS.forEach(([id, label]) => {
@@ -325,8 +348,10 @@
     const create = el("button", { className: "primary", textContent: "Create App" });
     create.addEventListener("click", async () => {
       const platforms = PLATFORMS.map(([id]) => id).filter((id) => platformState[id]);
-      const next = await api("create", { appName: newAppName, platforms });
-      if (next && !next.error) { showCreate = false; newAppName = ""; render(next); }
+      const templateAppId = useTemplate && state.templates.length ? templateChoice : "";
+      if (useTemplate && !templateAppId) return;
+      const next = await api("create", { appName: newAppName, platforms, templateAppId });
+      if (next && !next.error) { showCreate = false; newAppName = ""; useTemplate = false; render(next); }
     });
     wrap.appendChild(create);
     return wrap;
