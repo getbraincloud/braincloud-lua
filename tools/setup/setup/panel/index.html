@@ -140,6 +140,10 @@
         <input type="password" id="appValue" autocomplete="off" placeholder="Unchanged">
         <button class="flat" id="eye">Show</button>
       </div>
+      <div id="childList" class="section hidden" style="padding:0">
+        <div class="label">Child Apps</div>
+        <div id="childRows"></div>
+      </div>
       <div class="status" id="status"></div>
       <button class="primary" id="save">Save</button>
       <div class="warn" id="gitWarn"></div>
@@ -152,10 +156,12 @@
 
   <div class="section">
     <div class="section-label">Resources</div>
-    <a href="https://portal.braincloudservers.com/" target="_blank" rel="noopener">Portal</a>
-    <a href="https://getbraincloud.com/apidocs/apiref/" target="_blank" rel="noopener">API Reference</a>
-    <a href="https://getbraincloud.com/apidocs/" target="_blank" rel="noopener">Docs</a>
-    <a href="https://github.com/getbraincloud/braincloud-java" target="_blank" rel="noopener">Java SDK</a>
+    <a href="https://portalx.braincloudservers.com/" target="_blank" rel="noopener">Portal</a>
+    <a href="https://docs.braincloudservers.com/learn/introduction/" target="_blank" rel="noopener">Learn</a>
+    <a href="https://docs.braincloudservers.com/api/introduction" target="_blank" rel="noopener">API Reference</a>
+    <a href="https://help.getbraincloud.com/en/" target="_blank" rel="noopener">Knowledge Base</a>
+    <a href="https://apps.braincloudservers.com/code_examples/index.html" target="_blank" rel="noopener">Code Examples</a>
+    <a id="sdkLink" class="hidden" href="#" target="_blank" rel="noopener"></a>
   </div>
   <hr>
 
@@ -197,6 +203,10 @@
   let credsOpen = null;
   let serverDirty = false;
   let teamsRequested = false;
+  const CHILD_MANUAL = "__manual__";
+  // Child rows being added; reset when the configured app changes.
+  let childRows = [];
+  let childRowsFor = null;
 
   function el(tag, props, children) {
     const node = document.createElement(tag);
@@ -228,7 +238,7 @@
   }
 
   function setDisabled(on) {
-    document.querySelectorAll("#dock button, #dock select, #dock input").forEach((n) => { n.disabled = on; });
+    document.querySelectorAll("#dock button, #dock select, #dock input").forEach((n) => { n.disabled = on || n.dataset.locked === "1"; });
   }
 
   function currentServerUrl() {
@@ -294,7 +304,8 @@
     state.apps.forEach((a) => {
       const selected = !showCreate && a.id === pending && pending !== "";
       matched = matched || selected;
-      appSelect.appendChild(el("option", { value: a.id, textContent: a.name, selected }));
+      const label = a.isParent ? a.name + "  Parent" + (a.levelName ? ": " + a.levelName : "") : a.name;
+      appSelect.appendChild(el("option", { value: a.id, textContent: label, selected }));
     });
     if (!matched) { appSelect.value = CREATE_NEW; showCreate = true; }
     appSelect.addEventListener("change", () => {
@@ -308,6 +319,78 @@
     box.appendChild(el("div", { className: "row" }, [appSelect, refreshButton(() => api("apps"))]));
 
     if (showCreate) box.appendChild(createAppFields());
+    else {
+      const children = childAppsSection();
+      if (children) box.appendChild(children);
+    }
+  }
+
+  function childLabel(id, name) { return name ? name + " (" + id + ")" : id; }
+
+  function childAppsSection() {
+    const c = state.configured;
+    const parent = state.apps.find((a) => a.id === c.appId);
+    const isParent = !!(parent && parent.isParent);
+    if (!c.present || (!isParent && !c.children.length)) return null;
+
+    const wrap = el("div", { className: "section", style: "padding:0" });
+    // Set in the portal; the setup login can't change it.
+    const flag = el("input", { type: "checkbox", checked: isParent });
+    flag.dataset.locked = "1";
+    wrap.appendChild(el("label", { className: "check" }, [flag, "Parent app (set in the brainCloud portal)"]));
+
+    const add = el("button", { className: "flat", textContent: "+", title: "Add a child app" });
+    add.addEventListener("click", () => { childRows.push({ manual: false, id: "", value: "" }); render(state); });
+    wrap.appendChild(el("div", { className: "row" }, [el("div", { className: "label", textContent: "Child Apps" }), add]));
+
+    const linked = state.apps.filter((a) => a.parentAppId === c.appId);
+    if (isParent && !linked.length) {
+      wrap.appendChild(el("div", { className: "hint", textContent: "No child apps visible. Link children in the brainCloud portal (or ask a team admin)." }));
+    }
+
+    // Index matches getChildAppIdList().
+    c.children.forEach((child, index) => {
+      const remove = el("button", { className: "flat", textContent: "×", title: "Remove" });
+      remove.addEventListener("click", () => api("child-remove", { appId: child.id }));
+      wrap.appendChild(el("div", { className: "row" }, [el("input", { type: "text", readOnly: true, value: "[" + index + "] " + childLabel(child.id, child.name) }), remove]));
+    });
+
+    const used = new Set(c.children.map((x) => x.id));
+    const available = linked.filter((a) => !used.has(a.id));
+    childRows.forEach((row) => {
+      const drop = el("button", { className: "flat", textContent: "×", title: "Cancel" });
+      drop.addEventListener("click", () => { childRows.splice(childRows.indexOf(row), 1); render(state); });
+
+      const pick = el("select");
+      pick.appendChild(el("option", { value: "", textContent: "-- Select child app --" }));
+      available.forEach((a) => pick.appendChild(el("option", { value: a.id, textContent: childLabel(a.id, a.name) })));
+      pick.appendChild(el("option", { value: CHILD_MANUAL, textContent: "Other (enter manually)", selected: row.manual }));
+      pick.addEventListener("change", async () => {
+        if (pick.value === CHILD_MANUAL) { row.manual = true; render(state); return; }
+        row.manual = false;
+        if (!pick.value) return;
+        const next = await api("child-add", { appId: pick.value });
+        if (next && !next.error) { childRows.splice(childRows.indexOf(row), 1); render(next); }
+      });
+      wrap.appendChild(el("div", { className: "row" }, [pick, drop]));
+
+      if (row.manual) {
+        const id = el("input", { type: "text", placeholder: "Child App ID", value: row.id, spellcheck: false });
+        id.addEventListener("input", () => { row.id = id.value; });
+        const value = el("input", { type: "password", placeholder: "Child App Secret", value: row.value, autocomplete: "off" });
+        value.addEventListener("input", () => { row.value = value.value; });
+        const save = el("button", { className: "wide", textContent: "Add Child App" });
+        save.addEventListener("click", async () => {
+          if (!row.id.trim() || !row.value) return;
+          const next = await api("child-add", { appId: row.id.trim(), appValue: row.value });
+          if (next && !next.error) { childRows.splice(childRows.indexOf(row), 1); render(next); }
+        });
+        wrap.appendChild(id);
+        wrap.appendChild(value);
+        wrap.appendChild(save);
+      }
+    });
+    return wrap;
   }
 
   function createAppFields() {
@@ -324,7 +407,7 @@
       if (useTemplate && !state.templates.length) api("templates");
       else render(state);
     });
-    wrap.appendChild(el("label", { className: "check" }, [tmplCb, "Create using Template"]));
+    wrap.appendChild(el("label", { className: "check", title: "Copies the dashboard configuration from a pre-created template." }, [tmplCb, "Create using Tutorial template"]));
     if (useTemplate) {
       if (state.templates.length) {
         if (!state.templates.some((t) => t.id === templateChoice)) templateChoice = state.templates[0].id;
@@ -337,14 +420,18 @@
       }
     }
 
-    wrap.appendChild(el("div", { className: "label", textContent: "Platforms" }));
-    const grid = el("div", { className: "grid" });
-    PLATFORMS.forEach(([id, label]) => {
-      const cb = el("input", { type: "checkbox", checked: platformState[id] });
-      cb.addEventListener("change", () => { platformState[id] = cb.checked; });
-      grid.appendChild(el("label", { className: "check" }, [cb, label]));
-    });
-    wrap.appendChild(grid);
+    // A template brings its own platforms, so the list only shows without one (as in Unity).
+    if (!useTemplate) {
+      wrap.appendChild(el("div", { className: "label", textContent: "Platforms" }));
+      wrap.appendChild(el("div", { className: "hint", textContent: "Users authenticating from a platform that isn't checked get a platform not enabled error." }));
+      const grid = el("div", { className: "grid" });
+      PLATFORMS.forEach(([id, label]) => {
+        const cb = el("input", { type: "checkbox", checked: platformState[id] });
+        cb.addEventListener("change", () => { platformState[id] = cb.checked; });
+        grid.appendChild(el("label", { className: "check" }, [cb, label]));
+      });
+      wrap.appendChild(grid);
+    }
     const create = el("button", { className: "primary", textContent: "Create App" });
     create.addEventListener("click", async () => {
       const platforms = PLATFORMS.map(([id]) => id).filter((id) => platformState[id]);
@@ -375,6 +462,10 @@
       ? "⚠  " + c.fileName + " is gitignored"
       : "⚠  Add " + c.fileName + " to .gitignore";
     $("gitWarn").classList.toggle("hidden", !c.present);
+    // Read-only; index matches getChildAppIdList(). Editing is under the account section.
+    $("childList").classList.toggle("hidden", !c.children.length);
+    $("childRows").replaceChildren(...c.children.map((child, index) =>
+      el("input", { type: "text", readOnly: true, value: "[" + index + "] " + childLabel(child.id, child.name) })));
     $("outputPath").textContent = c.output;
     $("logout").classList.toggle("hidden", state.state !== "logged_in");
   }
@@ -407,10 +498,16 @@
 
   function render(next) {
     state = next;
+    if (state.configured.appId !== childRowsFor) { childRows = []; childRowsFor = state.configured.appId; }
     const waiting = state.state === "logging_in";
     if (waiting && !pollTimer) pollTimer = setInterval(poll, 1500);
     if (!waiting && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     $("version").textContent = "Plugin " + state.pluginVersion;
+    if (state.sdkUrl) {
+      $("sdkLink").href = state.sdkUrl;
+      $("sdkLink").textContent = state.sdkName;
+      $("sdkLink").classList.remove("hidden");
+    }
     renderAccount();
     renderServer();
     renderCredentials();

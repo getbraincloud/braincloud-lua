@@ -59,20 +59,52 @@ function Wrapper:init(configModule)
 		end
 		return false
 	end
-	self:initialize(cfg.appId, cfg.appProfile, cfg.appVersion, cfg.serverUrl)
+	-- Child apps in the config: load them too so switchToChildProfile can sign.
+	local count = 0
+	for _ in pairs(cfg.appProfiles or {}) do
+		count = count + 1
+	end
+	if count > 1 then
+		self:initializeWithApps(cfg.appId, cfg.appProfiles, cfg.appVersion, cfg.serverUrl)
+		local ids = {}
+		for i, id in ipairs(cfg.childAppIds or {}) do
+			ids[i] = id
+		end
+		self._childAppIds = ids
+	else
+		self:initialize(cfg.appId, cfg.appProfile, cfg.appVersion, cfg.serverUrl)
+	end
 	return true
 end
 
 --- initialize(appId, secretKeyOrAppProfile, appVersion, serverUrl)
 function Wrapper:initialize(appId, secretKeyOrProfile, appVersion, serverUrl)
 	self.client:initialize(serverUrl, appId, secretKeyOrProfile, appVersion)
+	self._childAppIds = {}
 	self:_applySaved()
 end
 
 --- Multi-app init. secretMap = { [appId] = secretKeyOrAppProfile }.
 function Wrapper:initializeWithApps(defaultAppId, secretMap, appVersion, serverUrl)
 	self.client:initializeWithApps(serverUrl, defaultAppId, secretMap, appVersion)
+	-- map order isn't kept; init() replaces this with the config's order
+	local ids = {}
+	for id in pairs(secretMap or {}) do
+		if id ~= defaultAppId then
+			ids[#ids + 1] = id
+		end
+	end
+	self._childAppIds = ids
 	self:_applySaved()
+end
+
+--- Child app ids from the last init, in config order (the setup panel's [0] is list[1]).
+function Wrapper:getChildAppIdList()
+	local out = {}
+	for i, id in ipairs(self._childAppIds or {}) do
+		out[i] = id
+	end
+	return out
 end
 
 function Wrapper:getBCClient()

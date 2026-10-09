@@ -245,6 +245,49 @@ return TestUtils.buildRunner("Identity", nil, function(client)
 				end)
 			end,
 		},
+		{
+			name = "InitWithChildAppsConfig",
+			fn = function()
+				local ids = TestUtils.ids
+				if not (childAppId and ids.childSecret) then
+					TestUtils.skip("no childAppId/childSecret in the ids file")
+				end
+				-- shaped like a setup-tool config with one child app
+				local md5 = require("braincloud.lib.md5")
+				local function profileOf(value)
+					return function(payload)
+						return md5.sumhexa(payload .. value)
+					end
+				end
+				local parentProfile = profileOf(ids.secret)
+				package.loaded.braincloud_config_children = {
+					appId = ids.appId,
+					serverUrl = ids.serverUrl,
+					appVersion = ids.version,
+					appProfile = parentProfile,
+					appProfiles = { [ids.appId] = parentProfile, [childAppId] = profileOf(ids.childSecret) },
+					childAppIds = { childAppId },
+				}
+				local wrapper = TestUtils.wrapper
+				local okRun, err = pcall(function()
+					assert(wrapper:init("braincloud_config_children"), "init() failed")
+					assert(client._appProfiles[childAppId], "child profile not loaded")
+					local list = wrapper:getChildAppIdList()
+					assert(#list == 1 and list[1] == childAppId, "getChildAppIdList: " .. table.concat(list, ","))
+					list[1] = "changed"
+					assert(wrapper:getChildAppIdList()[1] == childAppId, "getChildAppIdList returned its own table")
+					TestUtils.authenticateAs(client, "A")
+					ok("SwitchToSingletonChildProfile", function(cb)
+						identity:switchToSingletonChildProfile(childAppId, true, cb)
+					end)
+				end)
+				package.loaded.braincloud_config_children = nil
+				wrapper:initializeWithApps(ids.appId, { [ids.appId] = ids.secret, [childAppId] = ids.childSecret }, ids.version, ids.serverUrl)
+				assert(okRun, err)
+				local manual = wrapper:getChildAppIdList()
+				assert(#manual == 1 and manual[1] == childAppId, "manual initializeWithApps child list")
+			end,
+		},
 	}
 	--- Combine test cases
 	for _, t in ipairs(extraTests) do
