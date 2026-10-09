@@ -1,0 +1,32 @@
+--- a/src/modules/love/love.cpp
++++ b/src/modules/love/love.cpp
+@@ -26,6 +26,16 @@
+ #include "modules/window/Window.h"
+ 
+ #include "love.h"
++
++#ifdef LOVE_IOS
++// brainCloud: LuaSec + OpenSSL linked statically (libbcssl.a); iOS can't load .so modules
++extern "C" {
++int luaopen_ssl_core(lua_State *L);
++int luaopen_ssl_context(lua_State *L);
++int luaopen_ssl_x509(lua_State *L);
++int luaopen_ssl_config(lua_State *L);
++}
++#endif
+ 
+ // C++
+ #include <string>
+@@ -523,6 +533,12 @@
+ #ifdef LOVE_ENABLE_ENET
+ 	love::luax_preload(L, luaopen_enet, "enet");
+ #endif
++#ifdef LOVE_IOS
++	love::luax_preload(L, luaopen_ssl_core, "ssl.core");
++	love::luax_preload(L, luaopen_ssl_context, "ssl.context");
++	love::luax_preload(L, luaopen_ssl_x509, "ssl.x509");
++	love::luax_preload(L, luaopen_ssl_config, "ssl.config");
++#endif
+ #ifdef LOVE_ENABLE_LUA53
+ 	love::luax_preload(L, luaopen_luautf8, "utf8");
+ #endif
