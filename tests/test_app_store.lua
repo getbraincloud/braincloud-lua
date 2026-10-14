@@ -93,5 +93,44 @@ return TestUtils.buildRunner("AppStore", nil, function(client)
 				assert(res ~= nil, "RefreshPromotions did not return a response")
 			end,
 		},
+		{
+			name = "GetStoreInfo",
+			fn = function()
+				local s, res = TestUtils.await("GetStoreInfo", function(cb)
+					appStore:getStoreInfo("xsolla", cb)
+				end)
+				TestUtils.assertOk("GetStoreInfo", s, res)
+			end,
+		},
+
+		{
+			name = "GetStoreInfoFail",
+			fn = function()
+				local s, res = TestUtils.await("GetStoreInfoFail", function(cb)
+					appStore:getStoreInfo("_invalid_store_id_", cb)
+				end)
+				TestUtils.assertFail("GetStoreInfoFail", s, res, 400, client.reasonCodes.INVALID_STORE_ID)
+			end,
+		},
+
+		{
+			name = "GetUserToken",
+			fn = function()
+				local s, res = TestUtils.await("GetUserToken", function(cb)
+					appStore:getUserToken("xsolla", cb)
+				end)
+				TestUtils.assertOk("GetUserToken", s, res)
+			end,
+		},
+
+		{
+			name = "GetUserTokenFail",
+			fn = function()
+				local s, res = TestUtils.await("GetUserTokenFail", function(cb)
+					appStore:getUserToken("_invalid_store_id_", cb)
+				end)
+				TestUtils.assertFail("GetUserTokenFail", s, res, 400, client.reasonCodes.INVALID_STORE_ID)
+			end,
+		},
 	}
 end)
