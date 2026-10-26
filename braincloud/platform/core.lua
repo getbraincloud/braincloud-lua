@@ -13,11 +13,11 @@ local socket = okSocket and socketModule or nil
 Platform.socket = socket
 
 function Platform.now()
-	if socket then
-		return socket.gettime()
-	end
 	if isLove and love.timer then
 		return love.timer.getTime()
+	end
+	if socket then
+		return socket.gettime()
 	end
 	return os.time()
 end

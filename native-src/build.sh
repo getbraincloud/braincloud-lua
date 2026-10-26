@@ -4,8 +4,12 @@
 #    https.so     - lua-https (optional; LÖVE 12 has it built in as love.https)
 #  Neither links a Lua library: they resolve Lua from the host (LÖVE's LuaJIT) at load time.
 #
-#  ./native-src/build.sh [macos] [linux-x64] [windows-x64]     (default: all)
-#  macOS host; linux uses Docker, windows uses mingw-w64 (brew install mingw-w64).
+#    platforms/ios/lib/*/libbcssl.a - LuaSec + OpenSSL static, for the patched LÖVE iOS build
+#
+#
+#  ./native-src/build.sh [macos] [linux-x64] [windows-x64] [ios] [android-arm64]     (default: all)
+#  macOS host; linux uses Docker, windows uses mingw-w64 (brew install mingw-w64), ios uses Xcode,
+#  android uses the NDK (ANDROID_NDK_ROOT, else the newest under ~/Library/Android/sdk/ndk).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,8 +20,11 @@ OPENSSL_VERSION=3.3.2
 LUASEC_TAG=v1.3.2
 LOVE_VERSION=11.5
 
+IOS_MIN=15.0
+ANDROID_API=21
+
 TARGETS=("$@")
-[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(macos linux-x64 windows-x64)
+[ ${#TARGETS[@]} -eq 0 ] && TARGETS=(macos linux-x64 windows-x64 ios android-arm64)
 
 mkdir -p "$WORK"
 cd "$WORK"
@@ -31,11 +38,11 @@ fetch() {
 
 LUASEC_SRC="config.c context.c ec.c options.c ssl.c x509.c luasocket/buffer.c luasocket/io.c luasocket/timeout.c"
 
-openssl_build() { # <target dir> <Configure target> [extra env...]
+openssl_build() { # <target dir> <Configure target> [extra Configure args...]
 	local dir="$1" target="$2"
 	[ -f "$dir/lib/libssl.a" ] && return
 	rm -rf "openssl-build-$target" && cp -R openssl-$OPENSSL_VERSION "openssl-build-$target"
-	(cd "openssl-build-$target" && ./Configure "$target" no-shared no-tests no-docs -fPIC --prefix="$dir" --libdir=lib >/dev/null && make -j8 >/dev/null && make install_sw >/dev/null)
+	(cd "openssl-build-$target" && ./Configure "$target" no-shared no-tests no-docs -fPIC "${@:3}" --prefix="$dir" --libdir=lib >/dev/null && make -j8 >/dev/null && make install_sw >/dev/null)
 }
 
 build_macos() {
@@ -102,12 +109,64 @@ build_windows() {
 	echo "windows-x64: built"
 }
 
+luasec_ios() { # <sdk> <arch> <openssl dir> <out .a>
+	local sdk=$1 arch=$2 ossl=$3 out=$4
+	local obj="$WORK/luasec-$sdk-$arch" target=$arch-apple-ios$IOS_MIN
+	[ $sdk = iphonesimulator ] && target=$target-simulator
+	rm -rf "$obj" && mkdir -p "$obj"
+	for f in $LUASEC_SRC luasocket/usocket.c; do
+		xcrun --sdk $sdk clang -target $target -O2 -fPIC -DWITH_LUASOCKET -Wno-deprecated-declarations \
+			-I"$WORK/LuaJIT/src" -I"$ossl/include" -Iluasec/src -Iluasec/src/luasocket -c "luasec/src/$f" -o "$obj/$(echo $f | tr / _).o"
+	done
+	libtool -static -o "$out" "$obj"/*.o "$ossl/lib/libssl.a" "$ossl/lib/libcrypto.a" 2>/dev/null
+}
+
+# iOS can't load .so modules: a static lib the patched LÖVE iOS build links in (platforms/ios).
+build_ios() {
+	export IPHONEOS_DEPLOYMENT_TARGET=$IOS_MIN
+	local lib="$ROOT/platforms/ios/lib"
+	mkdir -p "$lib/iphoneos" "$lib/iphonesimulator"
+	openssl_build "$WORK/openssl-ios-arm64" ios64-xcrun no-async
+	luasec_ios iphoneos arm64 "$WORK/openssl-ios-arm64" "$WORK/libbcssl-iphoneos.a"
+	local sims=()
+	for arch in arm64 x86_64; do
+		openssl_build "$WORK/openssl-iossim-$arch" iossimulator-$arch-xcrun no-async
+		luasec_ios iphonesimulator $arch "$WORK/openssl-iossim-$arch" "$WORK/libbcssl-sim-$arch.a"
+		sims+=("$WORK/libbcssl-sim-$arch.a")
+	done
+	strip -S -o "$lib/iphoneos/libbcssl.a" "$WORK/libbcssl-iphoneos.a"
+	lipo -create "${sims[@]}" -output "$WORK/libbcssl-iphonesimulator.a"
+	strip -S -o "$lib/iphonesimulator/libbcssl.a" "$WORK/libbcssl-iphonesimulator.a"
+	echo "ios: $(lipo -archs "$lib/iphoneos/libbcssl.a") / simulator $(lipo -archs "$lib/iphonesimulator/libbcssl.a")"
+}
+
+# Links LÖVE's own liblove.so (LuaJIT is inside it), so the module shares the game's Lua state.
+build_android() {
+	local ndk="${ANDROID_NDK_ROOT:-$(ls -d "$HOME/Library/Android/sdk/ndk/"* 2>/dev/null | sort -V | tail -1)}"
+	[ -d "$ndk" ] || { echo "android: install the NDK or set ANDROID_NDK_ROOT"; exit 1; }
+	local tc="$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+	local apk="$WORK/love-$LOVE_VERSION-android.apk"
+	[ -f "$apk" ] || curl -sL -o "$apk" "https://github.com/love2d/love/releases/download/$LOVE_VERSION/love-$LOVE_VERSION-android.apk"
+	unzip -q -o -j "$apk" "lib/arm64-v8a/liblove.so" -d "$WORK/love-android-arm64"
+	(export ANDROID_NDK_ROOT="$ndk" PATH="$tc:$PATH"; openssl_build "$WORK/openssl-android-arm64" android-arm64)
+	mkdir -p "$OUT/android-arm64"
+	(cd luasec/src && "$tc/aarch64-linux-android$ANDROID_API-clang" -O2 -fPIC -shared -DWITH_LUASOCKET -Wno-deprecated-declarations \
+		-DluaL_setfuncs=bc_luaL_setfuncs -I"$WORK/LuaJIT/src" -I"$WORK/openssl-android-arm64/include" -I. -Iluasocket \
+		$LUASEC_SRC luasocket/usocket.c "$ROOT/native-src/compat/setfuncs.c" \
+		"$WORK/openssl-android-arm64/lib/libssl.a" "$WORK/openssl-android-arm64/lib/libcrypto.a" \
+		-L"$WORK/love-android-arm64" -llove -o "$OUT/android-arm64/ssl.so")
+	"$tc/llvm-strip" --strip-unneeded "$OUT/android-arm64/ssl.so"
+	echo "android-arm64: built"
+}
+
 fetch
 for t in "${TARGETS[@]}"; do
 	case "$t" in
 		macos) build_macos ;;
 		linux-x64) build_linux ;;
 		windows-x64) build_windows ;;
+		ios) build_ios ;;
+		android-arm64) build_android ;;
 		*) echo "unknown target $t"; exit 1 ;;
 	esac
 done

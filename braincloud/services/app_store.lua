@@ -10,6 +10,8 @@ local OPS = {
 	FINALIZE_PURCHASE = "FINALIZE_PURCHASE",
 	ELIGIBLE_PROMOTIONS = "ELIGIBLE_PROMOTIONS",
 	GET_INVENTORY = "GET_INVENTORY",
+	GET_STORE_INFO = "GET_STORE_INFO",
+	GET_USER_TOKEN = "GET_USER_TOKEN",
 	REFRESH_PROMOTIONS = "REFRESH_PROMOTIONS",
 	START_PURCHASE = "START_PURCHASE",
 	VERIFY_PURCHASE = "VERIFY_PURCHASE",
@@ -176,6 +178,30 @@ end
 function AppStore:refreshPromotions(callback)
 	local message = {}
 	self.client:sendRequest(SERVICE, OPS.REFRESH_PROMOTIONS, message, callback)
+end
+
+--- Returns the store's client-side configuration for the given store.
+-- Service Name - appStore
+-- Service Operation - GET_STORE_INFO
+--
+-- @param storeId The store platform. Valid stores are:
+--        xsolla
+-- @param callback The method to be invoked when the server response is received
+--
+function AppStore:getStoreInfo(storeId, callback)
+	self.client:sendRequest(SERVICE, OPS.GET_STORE_INFO, { storeId = storeId }, callback)
+end
+
+--- Returns a store user token (JWT) for the current user, generated server-side.
+-- Service Name - appStore
+-- Service Operation - GET_USER_TOKEN
+--
+-- @param storeId The store platform. Valid stores are:
+--        xsolla
+-- @param callback The method to be invoked when the server response is received
+--
+function AppStore:getUserToken(storeId, callback)
+	self.client:sendRequest(SERVICE, OPS.GET_USER_TOKEN, { storeId = storeId }, callback)
 end
 
 return AppStore

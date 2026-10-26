@@ -26,6 +26,8 @@ local function platformDir()
 		return arch == "x86" and "windows-x86" or "windows-x64", "dll"
 	elseif os_ == "Linux" then
 		return arch == "arm64" and "linux-arm64" or "linux-x64", "so"
+	elseif os_ == "Android" then
+		return "android-" .. arch, "so"
 	end
 	return nil
 end
@@ -54,7 +56,9 @@ local function realPath(rel)
 		return realDir .. "/" .. gamePath
 	end
 	local saveRel = "braincloud-native/" .. rel
-	if not love.filesystem.getInfo(saveRel) then
+	-- recopy when the game ships a different build (e.g. after an app update)
+	local saved = love.filesystem.getInfo(saveRel)
+	if not saved or saved.size ~= love.filesystem.getInfo(gamePath).size then
 		love.filesystem.createDirectory(saveRel:match("^(.*)/[^/]+$"))
 		local data = love.filesystem.read(gamePath)
 		if not data or not love.filesystem.write(saveRel, data) then
@@ -104,12 +108,16 @@ end
 Native.INSTALL_SSL_SOURCE = [[
 local cfg = ...
 if package.loaded["ssl"] then return true end
-if cfg.sslPath then
+-- iOS can't load .so files, so its LÖVE build links LuaSec in and preloads ssl.core itself
+local static = package.preload["ssl.core"] ~= nil
+if cfg.sslPath and not static then
 	for _, m in ipairs({ "core", "context", "x509", "config" }) do
 		local fn = package.loadlib(cfg.sslPath, "luaopen_ssl_" .. m)
 		if not fn then return false end
 		package.preload["ssl." .. m] = fn
 	end
+end
+if cfg.sslPath or static then
 	if cfg.sslLua then
 		package.preload["ssl"] = function() return assert(loadstring(cfg.sslLua, "=ssl.lua"))() end
 	end
