@@ -110,14 +110,73 @@ ordered channels. See the CursorParty example in
 
 - The native pack ships for macOS (universal), Windows x64, Linux x64 and Android arm64. iOS
   uses its own LÖVE build (see [iOS](#ios) below).
-- **Web builds** ([love.js](https://github.com/Davidobot/love.js), compatibility mode): the
-  SDK detects `love.system.getOS() == "Web"` and routes HTTP and WebSockets through the page.
-  Include `braincloud/web/braincloud-web.js` in the love.js `index.html` before `game.js`, and
-  call `braincloudWeb.attach(Module)` just before `Love(Module)`. Leave `braincloud/native/`
-  out of the web `.love`. Relay connects with `ssl = true` to the room's `secureAddress` /
-  `ports.wss`.
+- **Web builds** need one extra file on the page; see [Web](#web-lovejs) below.
 - Inside a packaged `.love` or fused executable, LÖVE can't load native libraries directly,
   so the SDK copies them to the save directory on first run.
+
+## Web (love.js)
+
+[love.js](https://github.com/Davidobot/love.js) runs a LÖVE 11 game in the browser. Browsers don't
+let Lua open network connections, so the SDK hands its requests to a small JavaScript file on the
+page, `braincloud-web.js` (the "web bridge"). Your game code doesn't change: the SDK detects
+`love.system.getOS() == "Web"` and switches over by itself.
+
+You need Node.js 18+.
+
+**1. Make a `.love` without the native pack** (browsers can't load it). From your game folder:
+
+```sh
+zip -9 -r ../MyGame.love . -x 'braincloud/native/*'
+```
+
+**2. Convert it** (`-c` = compatibility mode, works on any web host; `-m` = memory, raise it for big games):
+
+```sh
+npx -y love.js@11.4.1 -c -m 134217728 -t "My Game" ../MyGame.love ../MyGame-web
+```
+
+**3. Copy the web bridge next to `index.html`:**
+
+```sh
+cp braincloud/web/braincloud-web.js ../MyGame-web/
+```
+
+**4. Edit `MyGame-web/index.html` in two places.** Load the bridge just before `game.js`:
+
+```html
+<script type="text/javascript" src="braincloud-web.js"></script>
+<script type="text/javascript" src="game.js"></script>
+```
+
+Then find `Love(Module);` (inside `applicationLoad`) and attach the bridge just before it:
+
+```js
+var applicationLoad = function () {
+  braincloudWeb.attach(Module);
+  Love(Module);
+};
+```
+
+love.js writes a fresh `index.html` every time it runs, so redo step 4 after each conversion.
+
+**5. Test it from a local web server** (opening `index.html` straight from disk doesn't work):
+
+```sh
+cd ../MyGame-web && npx -y http-server -p 8080 -c-1
+```
+
+Open http://localhost:8080 and click the page once (browsers mute audio until you do). To publish,
+upload the whole folder to any static host (S3, itch.io as an HTML game, GitHub Pages, ...).
+
+**If it doesn't work**, open the browser console (Chrome: Cmd+Option+J / Ctrl+Shift+J):
+
+- `bc:init()` succeeds but login never calls back, and the console shows lines starting with
+  `@@BCWEB@@`: the bridge isn't attached. Check steps 3 and 4.
+- Out-of-memory error: raise `-m` in step 2 (e.g. `268435456`).
+- Make sure `bc:update()` runs every frame; on web that's how replies come back.
+
+Web limits: love.js is LÖVE 11 running plain Lua 5.1 (no LuaJIT `ffi`, no `love.thread`, no native
+modules), saves live in the browser's storage.
 
 ## iOS
 
