@@ -1,7 +1,4 @@
 .DS_Store
 native-src/.work/
 tests/test_ids*.txt
-# brainCloud app config (generated)
-/tests/love/f767e954.lua
-# brainCloud app config (generated)
 /tests/love/braincloud_config.lua
