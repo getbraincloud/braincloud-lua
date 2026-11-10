@@ -23,11 +23,23 @@ end
 TestUtils.ids = loadIds(os.getenv("BC_TEST_IDS") or "test_ids.txt")
 
 local wrapper = BrainCloud.new("tests")
-local secrets = { [TestUtils.ids.appId] = TestUtils.ids.secret }
-if TestUtils.ids.childAppId and TestUtils.ids.childSecret then
-	secrets[TestUtils.ids.childAppId] = TestUtils.ids.childSecret
+-- BC_TEST_CONFIG: folder holding the setup tool's braincloud_config.lua (bccm sets it when data/ has one).
+local configDir = os.getenv("BC_TEST_CONFIG")
+if configDir then
+	package.path = configDir .. "/?.lua;" .. package.path
+	-- Don't let the ids file hide a config that should have read.
+	if not wrapper:init() then
+		print("ERROR: braincloud_config.lua is present but did not initialize. Run the setup tool again.")
+		os.exit(1)
+	end
+	print("Initialized from braincloud_config.lua")
+else
+	local secrets = { [TestUtils.ids.appId] = TestUtils.ids.secret }
+	if TestUtils.ids.childAppId and TestUtils.ids.childSecret then
+		secrets[TestUtils.ids.childAppId] = TestUtils.ids.childSecret
+	end
+	wrapper:initializeWithApps(TestUtils.ids.appId, secrets, TestUtils.ids.version, TestUtils.ids.serverUrl)
 end
-wrapper:initializeWithApps(TestUtils.ids.appId, secrets, TestUtils.ids.version, TestUtils.ids.serverUrl)
 wrapper:getBCClient():setDebugEnabled(os.getenv("BC_TEST_DEBUG") == "1")
 TestUtils.wrapper = wrapper
 TestUtils.client = wrapper:getBCClient()

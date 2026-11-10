@@ -104,65 +104,99 @@ ordered channels. See the CursorParty example in
 | LÖVE 12 | built in (`love.https`) | native pack | built in (LuaSocket) |
 | LÖVE 11.4 / 11.5 | native pack | native pack | built in (LuaSocket) |
 | Web (love.js) | browser `fetch` via the web bridge | browser WebSocket via the web bridge | `wss` only |
-| iOS (LÖVE 11.5) | LuaSec, built in by `platforms/ios` | LuaSec, built in by `platforms/ios` | built in (LuaSocket) |
+| iOS (LÖVE 11.5) | LuaSec, linked in from `platforms/ios` | LuaSec, linked in from `platforms/ios` | built in (LuaSocket) |
 | Android (LÖVE 11.5) | native pack | native pack | built in (LuaSocket) |
 | Plain LuaJIT | LuaSec | LuaSec | LuaSocket |
 
 - The native pack ships for macOS (universal), Windows x64, Linux x64 and Android arm64. iOS
   uses its own LÖVE build (see [iOS](#ios) below).
-- **Web builds** ([love.js](https://github.com/Davidobot/love.js), compatibility mode): the
-  SDK detects `love.system.getOS() == "Web"` and routes HTTP and WebSockets through the page.
-  Include `braincloud/web/braincloud-web.js` in the love.js `index.html` before `game.js`, and
-  call `braincloudWeb.attach(Module)` just before `Love(Module)`. Leave `braincloud/native/`
-  out of the web `.love`. Relay connects with `ssl = true` to the room's `secureAddress` /
-  `ports.wss`.
+- **Web builds** need one extra file on the page; see [Web](#web-lovejs) below.
 - Inside a packaged `.love` or fused executable, LÖVE can't load native libraries directly,
   so the SDK copies them to the save directory on first run.
 
-## iOS
+## Web (love.js)
 
-iOS apps can't load the native pack, so `platforms/ios/build.sh` builds LÖVE 11.5 for iOS with
-LuaSec + OpenSSL compiled in, adds your game and signs it. You need a Mac with Xcode, signed in
-to your Apple Developer team (Xcode > Settings > Accounts).
+[love.js](https://github.com/Davidobot/love.js) runs a LÖVE 11 game in the browser. Browsers don't
+let Lua open network connections, so the SDK hands its requests to a small JavaScript file on the
+page, `braincloud-web.js` (the "web bridge"). Your game code doesn't change: the SDK detects
+`love.system.getOS() == "Web"` and switches over by itself.
+
+You need Node.js 18+.
+
+**1. Make a `.love` without the native pack** (browsers can't load it). From your game folder:
 
 ```sh
-# build and run on a connected iPhone/iPad
-braincloud-lua/platforms/ios/build.sh path/to/game --team <TEAM_ID> --bundle-id com.you.game \
-	--name "My Game" --icon path/to/icon.png --launch
-
-# iOS Simulator (no signing)
-braincloud-lua/platforms/ios/build.sh path/to/game --bundle-id com.you.game --simulator --launch
-
-# App Store: .xcarchive + .ipa to upload with Transporter
-braincloud-lua/platforms/ios/build.sh path/to/game --team <TEAM_ID> --bundle-id com.you.game \
-	--version 1.0.0 --build 1 --archive
+zip -9 -r ../MyGame.love . -x 'braincloud/native/*'
 ```
 
-Output goes to `./build/ios` (`--out` to change it). The first build downloads the LÖVE iOS
-source and takes a few minutes; later builds are incremental. Your game should handle a phone-
-sized screen and touch (LÖVE delivers taps as mouse presses); see the CursorParty example.
+**2. Convert it** (`-c` = compatibility mode, works on any web host; `-m` = memory, raise it for big games):
+
+```sh
+npx -y love.js@11.4.1 -c -m 134217728 -t "My Game" ../MyGame.love ../MyGame-web
+```
+
+**3. Copy the web bridge next to `index.html`:**
+
+```sh
+cp braincloud/web/braincloud-web.js ../MyGame-web/
+```
+
+**4. Edit `MyGame-web/index.html` in two places.** Load the bridge just before `game.js`:
+
+```html
+<script type="text/javascript" src="braincloud-web.js"></script>
+<script type="text/javascript" src="game.js"></script>
+```
+
+Then find `Love(Module);` (inside `applicationLoad`) and attach the bridge just before it:
+
+```js
+var applicationLoad = function () {
+  braincloudWeb.attach(Module);
+  Love(Module);
+};
+```
+
+love.js writes a fresh `index.html` every time it runs, so redo step 4 after each conversion.
+
+**5. Test it from a local web server** (opening `index.html` straight from disk doesn't work):
+
+```sh
+cd ../MyGame-web && npx -y http-server -p 8080 -c-1
+```
+
+Open http://localhost:8080 and click the page once (browsers mute audio until you do). To publish,
+upload the whole folder to any static host (S3, itch.io as an HTML game, GitHub Pages, ...).
+
+**If it doesn't work**, open the browser console (Chrome: Cmd+Option+J / Ctrl+Shift+J):
+
+- `bc:init()` succeeds but login never calls back, and the console shows lines starting with
+  `@@BCWEB@@`: the bridge isn't attached. Check steps 3 and 4.
+- Out-of-memory error: raise `-m` in step 2 (e.g. `268435456`).
+- Make sure `bc:update()` runs every frame; on web that's how replies come back.
+
+Web limits: love.js is LÖVE 11 running plain Lua 5.1 (no LuaJIT `ffi`, no `love.thread`, no native
+modules), saves live in the browser's storage.
+
+## iOS
+
+iOS apps can't load the native pack, so LuaSec + OpenSSL are linked into LÖVE itself. Add two things
+to your LÖVE 11.5 iOS build:
+
+- `platforms/ios/lib/<iphoneos|iphonesimulator>/libbcssl.a`: link it into the `love-ios` target.
+- `platforms/ios/love-11.5-ios.patch`: apply it to the LÖVE source (`patch -p1`). It preloads
+  `ssl.core`, `ssl.context`, `ssl.x509` and `ssl.config` from that library.
+
+The [CursorParty example](https://github.com/getbraincloud/lua-examples) has a build script that
+does this end to end (download, patch, sign, install): `platforms/ios/build.sh`.
 
 ## Android
 
 The native pack includes `android-arm64`, so the SDK works in any LÖVE 11.5 Android build of your
-game. `platforms/android/build.sh` makes an APK by repackaging the official LÖVE APK with your game,
-package name, label and icon. You need Java 17+ and the Android SDK build-tools (Android Studio
-installs both).
-
-```sh
-# build, install and launch on a connected device or running emulator
-braincloud-lua/platforms/android/build.sh path/to/game --package com.you.game \
-	--name "My Game" --icon path/to/icon.png --launch
-
-# signed release APK
-BC_KEYSTORE_PASS=... braincloud-lua/platforms/android/build.sh path/to/game --package com.you.game \
-	--version 1.0.0 --version-code 1 --keystore release.jks --key-alias mygame
-```
-
-Without `--keystore` the APK is signed with your Android debug key. For Google Play (`.aab`), build
-LÖVE's [love-android](https://github.com/love2d/love-android) project with your `game.love`; the
-SDK needs nothing extra there. Set `t.window.resizable = false` in `conf.lua` on phones, or the game
-follows the device's rotation.
+game with nothing extra. Ship `braincloud/native/android-arm64/ssl.so` inside your game, as on
+desktop. The [CursorParty example](https://github.com/getbraincloud/lua-examples) repackages the
+official LÖVE APK in `platforms/android/build.sh`. Set `t.window.resizable = false` in `conf.lua`
+on phones, or the game follows the device's rotation.
 
 ## Tests
 
