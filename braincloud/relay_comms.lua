@@ -225,11 +225,14 @@ function RelayComms:connect(connectionType, options, success, failure)
 	end
 
 	if connectionType == "ws" then
-		if not WebSocket.available(options.ssl) then
+		-- A full URL (connectData.secureUrl) is used as given; port is ignored.
+		local isUrl = options.host:find("://", 1, true) ~= nil
+		local ssl = isUrl and options.host:sub(1, 6) == "wss://" or (not isUrl and options.ssl)
+		if not WebSocket.available(ssl) then
 			self:_queueError("Relay: secure WebSocket needs the brainCloud native pack (ssl module)")
 			return
 		end
-		local uri = (options.ssl and "wss://" or "ws://") .. options.host .. ":" .. tostring(options.port)
+		local uri = isUrl and options.host or ((ssl and "wss://" or "ws://") .. options.host .. ":" .. tostring(options.port))
 		self._socket = {
 			kind = "ws",
 			ws = WebSocket.new(uri, {
