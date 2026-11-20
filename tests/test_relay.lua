@@ -9,7 +9,7 @@ return TestUtils.buildRunner("Relay", nil, function(client)
 	local rtt = client.rttService
 	local ReasonCodes = client.reasonCodes
 
-	local function fullFlow(connectionType, withEndMatch)
+	local function fullFlow(connectionType, withEndMatch, secure)
 		-- fresh user so no lobby membership from earlier tests carries over (C# SetUpNewUser)
 		client.authentication:clearSavedSession()
 		TestUtils.assertOk("NewUser", TestUtils.await("NewUser", function(cb)
@@ -48,7 +48,12 @@ return TestUtils.buildRunner("Relay", nil, function(client)
 		end, 180) -- cold room servers can take minutes to provision
 
 		local cd = server.connectData
-		local port = cd.ports[connectionType]
+		local host, port = cd.address, cd.ports[connectionType]
+		if secure then
+			-- wss uses the server-provided URL as-is; no port
+			assert(cd.secureUrl, "connectData has no secureUrl")
+			host, port = cd.secureUrl, 0
+		end
 		assert(port, "no " .. connectionType .. " port in connectData")
 
 		local systemConnect, echoed, endMatch = false, false, false
@@ -67,8 +72,8 @@ return TestUtils.buildRunner("Relay", nil, function(client)
 
 		s, r = TestUtils.await("RelayConnect", function(cb)
 			relay:connect(connectionType, {
-				ssl = false,
-				host = cd.address,
+				ssl = secure == true,
+				host = host,
 				port = port,
 				passcode = server.passcode,
 				lobbyId = server.lobbyId,
@@ -116,6 +121,7 @@ return TestUtils.buildRunner("Relay", nil, function(client)
 
 	return {
 		{ name = "FullFlowWebSocket", fn = function() fullFlow("ws", false) end },
+		{ name = "FullFlowWSS", fn = function() fullFlow("ws", false, true) end },
 		{ name = "FullFlowTCP", fn = function() fullFlow("tcp", false) end },
 		{ name = "FullFlowUDP", fn = function() fullFlow("udp", false) end },
 		{ name = "FullFlowEndMatch", fn = function() fullFlow("ws", true) end },
